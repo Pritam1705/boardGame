@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'java17'
+        maven 'maven3'
+    }
+
+    environment {  
+        SCANNER_HOME = tool name: 'sonar-scanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation'  
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Pritam1705/boardGame.git'
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                sh 'mvn clean compile' 
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+               sh "mvn test"
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh ''' 
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=BoardGame \
+                        -Dsonar.projectName=BoardGame \
+                        -Dsonar.java.binaries=./target
+                    '''
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                sh 'mvn package' 
+            }
+        }
+
+        stage('Build & Tag Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'c618a7b8-ab90-483c-850c-4d5e2878c1a4', toolName: 'docker') {
+                        sh 'docker build -t boardset .'
+                        sh 'docker tag boardset pritam0517/boardset:latest'
+                        sh "docker push pritam0517/boardset:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('deploy to k8s') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'kube-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://172.31.43.164:6443') {
+                             sh 'kubectl apply -f deployment-service.yaml'
+                        }
+            }
+        }
+
+        stage('verify k8s deployment') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'kube-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://172.31.43.164:6443') {
+                             sh 'kubectl get po -n webapps'
+                             sh 'kubectl get svc -n webapps'
+                        }
+            }
+        }
+    }
+}
